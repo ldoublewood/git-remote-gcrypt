@@ -166,6 +166,15 @@ calculate_incremental_range()
 {
 	local remote_commit= local_commit= commit_range=
 	
+	# Check if remote repository exists
+	if [ "$Did_find_repo" = "no" ]; then
+		# No remote repository yet - this will be handled as initial push
+		commit_range=""
+		echo_info "No remote repository found - initial push required"
+		setvar "@r_commit_range" "$commit_range"
+		return 0
+	fi
+	
 	# Get remote latest commit from manifest
 	remote_commit=$(get_remote_latest_commit)
 	
@@ -177,9 +186,13 @@ calculate_incremental_range()
 		commit_range="${remote_commit}..${local_commit}"
 		echo_info "Incremental range: $commit_range"
 	else
-		# Full push needed
+		# Full push needed (or up to date)
 		commit_range=""
-		echo_info "Full push required"
+		if [ -n "$remote_commit" ] && [ "$remote_commit" = "$local_commit" ]; then
+			echo_info "Already up to date"
+		else
+			echo_info "Full push required"
+		fi
 	fi
 	
 	setvar "@r_commit_range" "$commit_range"
@@ -320,59 +333,87 @@ do_incremental_push()
 {
 	local r_commit_range= commit_count= pack_objects= tmp_pack= tmp_encrypted=
 	local new_serial= new_filename= manifest_content= tmp_manifest=
+	local is_initial_push=no r_sigmatch= r_signers=
 	
 	echo_info "Starting incremental push for branch: $Incremental_branch"
 	
-	# Step 1: Calculate commit range
-	calculate_incremental_range @r_commit_range
+	# Read configuration for encryption
+	read_config @r_sigmatch @r_signers
 	
-	if [ -z "$r_commit_range" ]; then
-		echo_info "No incremental range found, falling back to full push"
-		return 1  # Fall back to original push method
+	# Step 1: Check if this is the first push (remote repository doesn't exist)
+	if [ "$Did_find_repo" = "no" ]; then
+		echo_info "Initial incremental push - remote repository will be created"
+		is_initial_push=yes
+		r_commit_range=""  # Will push all commits for initial push
+	else
+		# Step 2: Calculate commit range for existing repository
+		calculate_incremental_range @r_commit_range
+		
+		if [ -z "$r_commit_range" ]; then
+			echo_info "Full push required"
+			is_initial_push=yes  # Treat as initial push
+		fi
 	fi
 	
-	# Step 2: Count commits in range
-	commit_count=$(git rev-list --count "$r_commit_range" 2>/dev/null || echo "0")
-	
-	if [ "$commit_count" = "0" ]; then
-		echo_info "No new commits to push"
-		return 0
+	# Step 3: Count commits in range
+	if [ "$is_initial_push" = "yes" ]; then
+		# For initial push, count all commits in the branch
+		commit_count=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+		echo_info "Initial push: Found $commit_count commits to push"
+	else
+		commit_count=$(git rev-list --count "$r_commit_range" 2>/dev/null || echo "0")
+		
+		if [ "$commit_count" = "0" ]; then
+			echo_info "No new commits to push"
+			return 0
+		fi
+		
+		echo_info "Found $commit_count new commits to push"
 	fi
 	
-	echo_info "Found $commit_count new commits to push"
-	
-	# Step 3: Create incremental pack
+	# Step 4: Create incremental pack
 	tmp_pack="$Tempdir/pack_incremental"
 	tmp_encrypted="$Tempdir/pack_encrypted"
 	
 	# Get objects for the commit range
-	git rev-list --objects "$r_commit_range" > "$tmp_pack.objects"
+	if [ "$is_initial_push" = "yes" ]; then
+		# For initial push, get all objects
+		git rev-list --objects HEAD > "$tmp_pack.objects"
+	else
+		git rev-list --objects "$r_commit_range" > "$tmp_pack.objects"
+	fi
 	
 	# Create pack file for these objects
 	git pack-objects --stdout < "$tmp_pack.objects" > "$tmp_pack" || {
 		echo_die "Failed to create incremental pack"
 	}
 	
-	# Step 4: Encrypt the pack
+	# Step 5: Encrypt the pack
 	local pack_key=
-	pack_key=$(gen_key "$Packkey_bytes")
+	pack_key=$(genkey "$Packkey_bytes")
 	
 	ENCRYPT "$pack_key" < "$tmp_pack" > "$tmp_encrypted" || {
 		echo_die "Failed to encrypt incremental pack"
 	}
 	
-	# Step 5: Generate new filename
+	# Step 6: Initialize remote repository if needed
+	if [ "$Did_find_repo" = "no" ]; then
+		echo_info "Creating remote repository for incremental mode"
+		make_new_repo
+	fi
+	
+	# Step 7: Generate new filename
 	new_serial=$((Remote_manifest_serial + 1))
 	new_filename=$(generate_incremental_filename "$new_serial" "$(cat "$tmp_encrypted")")
 	
 	echo_info "Uploading incremental pack: $new_filename"
 	
-	# Step 6: Upload encrypted pack
+	# Step 8: Upload encrypted pack
 	PUT "$URL" "$new_filename" "$tmp_encrypted" || {
 		echo_die "Failed to upload incremental pack"
 	}
 	
-	# Step 7: Create and upload new manifest
+	# Step 9: Create and upload new manifest
 	local latest_commit=
 	latest_commit=$(git rev-parse HEAD)
 	
@@ -394,9 +435,12 @@ do_incremental_push()
 		echo_die "Failed to upload new manifest"
 	}
 	
-	# Step 8: Update local cache
+	# Step 10: Update local cache and remote serial
 	cache_manifest_locally "$tmp_manifest"
 	Remote_manifest_serial="$new_serial"
+	
+	# Step 11: Update repository status
+	Did_find_repo=yes
 	
 	# Cleanup
 	rm -f "$tmp_pack" "$tmp_pack.objects" "$tmp_encrypted" "$tmp_manifest" "$manifest_encrypted"
