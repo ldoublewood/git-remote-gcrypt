@@ -143,9 +143,9 @@ test_incremental_detection() {
     
     chmod +x "$script_path"
     
-    # Test capabilities command
+    # Test capabilities command (using interactive mode)
     log_info "Testing capabilities command..."
-    "$script_path" capabilities origin "gcrypt::$REMOTE_DIR" || {
+    echo "capabilities" | "$script_path" origin "gcrypt::$REMOTE_DIR" >/dev/null 2>&1 || {
         log_warn "Capabilities test failed (expected for incomplete implementation)"
     }
     
@@ -225,7 +225,7 @@ test_error_handling() {
         return 0
     fi
     
-    "$script_path" capabilities origin "gcrypt::$REMOTE_DIR" 2>/dev/null || {
+    echo "invalid_command" | "$script_path" origin "gcrypt::$REMOTE_DIR" 2>/dev/null || {
         log_info "✓ Error handling works for invalid branch"
     }
     

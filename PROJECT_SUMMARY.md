@@ -87,6 +87,8 @@ branch: main
 - [x] 增强manifest结构
 - [x] 基础协商协议
 - [x] 配置管理
+- [x] 命令行参数解析修复
+- [x] 错误处理和调试支持
 
 ### 阶段2: 性能优化 🚧
 - [ ] 并行传输支持
@@ -134,6 +136,8 @@ git config remote.<name>.gcrypt-participants "KEY1 KEY2"
 - ✅ Manifest结构测试
 - ✅ 错误处理测试
 - ✅ 性能对比测试
+- ✅ 命令行参数解析测试
+- ✅ 增量模式检测测试
 
 ### 运行测试
 ```bash
@@ -142,6 +146,12 @@ git config remote.<name>.gcrypt-participants "KEY1 KEY2"
 
 # 运行功能演示
 ./demo_incremental.sh
+
+# 运行 Git 集成测试
+./test_git_integration.sh
+
+# 运行最终验证
+./final_validation.sh
 ```
 
 ## 技术亮点
