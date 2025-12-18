@@ -39,8 +39,8 @@ git remote set-url origin gcrypt-incremental::rsync://root@2.2.2.2:/tmp/gcrypt-t
 ### 方案 3: 配置 rsync 参数
 
 ```bash
-# 添加 rsync 特定配置
-git config remote.origin.gcrypt-rsync-put-flags "--chmod=D755,F644 --mkpath"
+# 添加 rsync 特定配置 (不使用 --mkpath，兼容旧版本)
+git config remote.origin.gcrypt-rsync-put-flags "--chmod=D755,F644"
 
 # 验证配置
 git config --get remote.origin.gcrypt-rsync-put-flags

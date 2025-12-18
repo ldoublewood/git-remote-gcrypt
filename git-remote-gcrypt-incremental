@@ -984,7 +984,26 @@ PUT()
 		if [ "${GCRYPT_DEBUG:-}" = "1" ]; then
 			echo_info "Uploading to rsync destination: $rsync_dest/$2"
 		fi
-		rsync $Conf_rsync_put_flags -I -W --mkpath "$3" "$rsync_dest/$2" >&2
+		
+		# For older rsync versions, we need to ensure the directory exists first
+		# Extract directory path from the destination
+		local dest_dir=$(dirname "$rsync_dest/$2")
+		if [ "$dest_dir" != "." ] && [ "$dest_dir" != "$rsync_dest" ]; then
+			# Try to create the directory structure via SSH
+			local ssh_host="${rsync_dest%%:*}"
+			local remote_path="${rsync_dest#*:}"
+			local file_dir="$remote_path/$(dirname "$2")"
+			
+			if [ "${GCRYPT_DEBUG:-}" = "1" ]; then
+				echo_info "Creating remote directory: $ssh_host:$file_dir"
+			fi
+			
+			# Create directory via SSH (ignore errors if it already exists)
+			ssh "$ssh_host" "mkdir -p '$file_dir'" 2>/dev/null || :
+		fi
+		
+		# Now upload the file
+		rsync $Conf_rsync_put_flags -I -W "$3" "$rsync_dest/$2" >&2
 	elif isurl rclone "$1"
 	then
 		rclone copyto --error-on-no-transfer "$3" "${1#rclone://}"/"$2" >&2
@@ -1014,10 +1033,16 @@ PUTREPO()
 		fi
 		# Create directory by syncing an empty local directory
 		mkdir -p "$Localdir/empty" 2>/dev/null || :
-		rsync $Conf_rsync_put_flags -q -r --mkpath "$Localdir/empty/" "$rsync_dest/" >&2 || {
-			# If mkpath is not supported, try without it
-			rsync $Conf_rsync_put_flags -q -r "$Localdir/empty/" "$rsync_dest/" >&2
-		}
+		# Create the remote directory via SSH for older rsync versions
+		local ssh_host="${rsync_dest%%:*}"
+		local remote_path="${rsync_dest#*:}"
+		
+		if [ "${GCRYPT_DEBUG:-}" = "1" ]; then
+			echo_info "Creating remote directory via SSH: $ssh_host:$remote_path"
+		fi
+		
+		# Create directory via SSH
+		ssh "$ssh_host" "mkdir -p '$remote_path'" >&2
 	elif isurl rclone "$1"
 	then
 		rclone mkdir "${1#rclone://}" >&2

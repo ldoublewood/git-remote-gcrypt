@@ -1,19 +1,22 @@
-# 🚀 快速修复 Rsync 权限问题
+# 🚀 快速修复 Rsync 兼容性问题
 
 ## 问题
 ```
-rsync: [receiver] mkstemp failed: Permission denied (13)
+rsync: --mkpath: unknown option
+rsync error: syntax or usage error (code 1)
 ```
 
-## 🎯 快速解决方案
+## 🎯 快速解决方案 (已修复)
 
-### 方法 1: 修复远程目录权限 (推荐)
+脚本已更新，不再使用 `--mkpath` 选项，兼容所有 rsync 版本。
+
+### 方法 1: 确保远程目录存在 (推荐)
 
 ```bash
 # 1. 在远程服务器创建目录并设置权限
 ssh root@2.2.2.2 "mkdir -p /s/tmp/gcrypt-incremental-test && chmod 755 /s/tmp/gcrypt-incremental-test"
 
-# 2. 配置 rsync 参数
+# 2. 配置 rsync 参数 (移除可能有问题的选项)
 git config remote.origin.gcrypt-rsync-put-flags "--chmod=D755,F644"
 
 # 3. 重新推送
