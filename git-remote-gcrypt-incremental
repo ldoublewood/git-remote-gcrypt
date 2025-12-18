@@ -400,11 +400,32 @@ do_incremental_push()
 	if [ "$Did_find_repo" = "no" ]; then
 		echo_info "Creating remote repository for incremental mode"
 		make_new_repo
+		
+		# Create base manifest (serial 0) for initial setup
+		local base_manifest="$Tempdir/base_manifest"
+		echo "version: $Incremental_version" > "$base_manifest"
+		echo "timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$base_manifest"
+		echo "repository_id: $Repoid" >> "$base_manifest"
+		echo "initial_setup: true" >> "$base_manifest"
+		
+		# Encrypt and upload base manifest
+		local base_manifest_encrypted="$Tempdir/base_manifest_encrypted"
+		PRIVENCRYPT "$Recipients" < "$base_manifest" > "$base_manifest_encrypted"
+		
+		local base_manifest_filename=
+		base_manifest_filename=$(generate_incremental_filename "0" "$(cat "$base_manifest_encrypted")")
+		
+		echo_info "Uploading base manifest: $base_manifest_filename"
+		PUT "$URL" "$base_manifest_filename" "$base_manifest_encrypted" || {
+			echo_die "Failed to upload base manifest"
+		}
+		
+		rm -f "$base_manifest" "$base_manifest_encrypted"
 	fi
 	
-	# Step 7: Generate new filename
-	new_serial=$((Remote_manifest_serial + 1))
-	new_filename=$(generate_incremental_filename "$new_serial" "$(cat "$tmp_encrypted")")
+	# Step 7: Generate pack filename (serial + 1)
+	local pack_serial=$((Remote_manifest_serial + 1))
+	new_filename=$(generate_incremental_filename "$pack_serial" "$(cat "$tmp_encrypted")")
 	
 	echo_info "Uploading incremental pack: $new_filename"
 	
@@ -413,7 +434,7 @@ do_incremental_push()
 		echo_die "Failed to upload incremental pack"
 	}
 	
-	# Step 9: Create and upload new manifest
+	# Step 9: Create and upload new manifest (different serial from pack)
 	local latest_commit=
 	latest_commit=$(git rev-parse HEAD)
 	
@@ -424,9 +445,10 @@ do_incremental_push()
 	local manifest_encrypted="$Tempdir/manifest_encrypted"
 	PRIVENCRYPT "$Recipients" < "$tmp_manifest" > "$manifest_encrypted"
 	
-	# Generate manifest filename
+	# Generate manifest filename (serial + 2, different from pack)
+	local manifest_serial=$((Remote_manifest_serial + 2))
 	local manifest_filename=
-	manifest_filename=$(generate_incremental_filename "$new_serial" "$(cat "$manifest_encrypted")")
+	manifest_filename=$(generate_incremental_filename "$manifest_serial" "$(cat "$manifest_encrypted")")
 	
 	echo_info "Uploading new manifest: $manifest_filename"
 	
@@ -437,10 +459,25 @@ do_incremental_push()
 	
 	# Step 10: Update local cache and remote serial
 	cache_manifest_locally "$tmp_manifest"
-	Remote_manifest_serial="$new_serial"
+	Remote_manifest_serial="$manifest_serial"
 	
 	# Step 11: Update repository status
 	Did_find_repo=yes
+	
+	# Step 12: Send Git protocol responses
+	local r_args="$1"
+	if [ -n "$r_args" ]; then
+		# Parse refspecs and send success responses
+		while IFS=: read -r src_ dst_; do
+			src_=${src_#+}
+			echo_git "ok $dst_"
+		done <<EOF
+$r_args
+EOF
+	fi
+	
+	# Send final empty line to complete Git protocol
+	echo_git
 	
 	# Cleanup
 	rm -f "$tmp_pack" "$tmp_pack.objects" "$tmp_encrypted" "$tmp_manifest" "$manifest_encrypted"
